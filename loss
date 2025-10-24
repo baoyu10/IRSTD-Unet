@@ -1,0 +1,76 @@
+import torch.nn as nn
+import numpy as np
+import  torch
+import torch.nn.functional as F
+from skimage import measure
+
+class CECPLoss(nn.Module):
+    def __init__(self, eps=1e-6):
+        super(CECPLoss, self).__init__()
+        self.eps = eps
+
+    def forward(self, pred_logits, target):
+        pred = torch.sigmoid(pred_logits)
+        B, C, H, W = pred.shape
+        total_loss = 0.0
+        for b in range(B):
+            p = pred[b, 0]
+            g = target[b, 0]
+            fg_mask = g == 1
+            if not fg_mask.any():
+                loss = 1 - (2 * (p * g).sum() + self.eps) / (p.sum() + g.sum() + self.eps)
+                total_loss += loss
+                continue
+            y_coords, x_coords = torch.where(fg_mask)
+            S = len(x_coords)
+            x_c = x_coords.float().mean()
+            y_c = y_coords.float().mean()
+            distances = torch.sqrt((x_coords - x_c)**2 + (y_coords - y_c)** 2)
+            R_max = distances.max() if distances.numel() > 0 else 1.0
+            sigma = 0.3 * R_max
+            x_grid, y_grid = torch.meshgrid(torch.arange(W, device=p.device), torch.arange(H, device=p.device), indexing='xy')
+            d_i = torch.sqrt((x_grid - x_c)**2 + (y_grid - y_c)** 2)
+            omega_spatial = torch.exp(-(d_i**2) / (2 * sigma**2))
+            numerator = (omega_spatial * p * g).sum() + self.eps
+            denominator = (omega_spatial * (p + g)).sum() + self.eps
+            loss = 1 - (numerator / denominator)
+            total_loss += loss
+        return total_loss / B
+
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+
+def Dice( pred, target,warm_epoch=1, epoch=1, layer=0):
+        pred = torch.sigmoid(pred)
+  
+        smooth = 1
+
+        intersection = pred * target
+        intersection_sum = torch.sum(intersection, dim=(1,2,3))
+        pred_sum = torch.sum(pred, dim=(1,2,3))
+        target_sum = torch.sum(target, dim=(1,2,3))
+
+        loss = (2*intersection_sum + smooth) / \
+            (pred_sum + target_sum + intersection_sum + smooth)
+
+        loss = 1 - loss.mean()
+
+        return loss
